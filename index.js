@@ -14,7 +14,15 @@ const app = express();
 // });
 dotenv.config();
 app.use(express.json());
-app.use(cors({ origin: "*" }));
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+app.options("*", cors());
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
