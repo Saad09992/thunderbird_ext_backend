@@ -94,6 +94,8 @@ export const processEmails = async (req, res) => {
        - Length of the text
        - formality, and commonly used phrases
       considering the above analysis, generate a email reply to the user input. The response should feel as if I personally wrote it. only show the email response not the other details.
+      NOTE: If context is not avaialble or empty ignore it and generate a professional email.
+      
       Context: {context}
       User Input: {question}
     `);
