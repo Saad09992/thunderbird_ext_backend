@@ -14,7 +14,6 @@ import cosineSimilarity from "compute-cosine-similarity";
 export const processEmails = async (req, res) => {
   try {
     const { email, userEmails } = req.body;
-    console.log(`Emails for training: ${userEmails.length}`);
     const pineconeApiKey = process.env.PINECONE_API_KEY;
     const pc = new Pinecone({ apiKey: pineconeApiKey });
 
@@ -45,7 +44,6 @@ export const processEmails = async (req, res) => {
     const embeddings = new OpenAIEmbeddings({
       model: "text-embedding-3-large",
     });
-    const llm = new ChatOpenAI({ model: "gpt-4-turbo", temperature: 0.3 });
 
     const vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
       pineconeIndex: index,
@@ -77,37 +75,45 @@ export const processEmails = async (req, res) => {
         state.question,
         5
       );
-      return { ...state, context: retrievedDocs };
+      return { ...state, context: retrievedDocs};
     };
 
     const generate = async (state) => {
+      // Create new GPT instance for each generation
+      const llm = new ChatOpenAI({ model: "gpt-4-turbo", temperature: 0.3 });
+      
       const docsContent = state.context
         .map((doc) => doc.pageContent)
         .join("\n\n");
-      // const promptTemplate = await hub.pull("rlm/rag-prompt");
+      
       const promptTemplate = ChatPromptTemplate.fromTemplate(`
       You are an AI assistant that helps me to write emails.
-      Based on the my past email provided as context. i want you to Analyze the following
+      Based on my past emails provided as context. I want you to Analyze the following
        - writing style
        - Message tone,
        - sentence structure,
        - Length of the text
        - formality, and commonly used phrases
-      considering the above analysis, generate a email reply to the user input. The response should feel as if I personally wrote it. only show the email response not the other details.
-      NOTE: If context is not avaialble or empty ignore it and generate a professional email.
+      considering the above analysis, generate an email reply to the user input. The response should feel as if I personally wrote it. Only show the email response not the other details. Give Response in proper formatting.
+      NOTE: If context is not available or empty ignore it and generate a professional email.
       
       Context: {context}
       User Input: {question}
     `);
+      
       const messages = await promptTemplate.invoke({
         question: state.question,
         context: docsContent,
       });
+      
       const response = await llm.invoke(messages);
       const similarityScores = await calculateSimilarity(
         response.content,
         state.context
       );
+      
+      // Destroy the llm instance by setting it to null
+      // JavaScript garbage collection will handle cleanup
       return {
         ...state,
         answer: response.content,
@@ -125,20 +131,22 @@ export const processEmails = async (req, res) => {
 
     const app = graph.compile();
 
-    const runPipeline = async (question) => {
-      const result = await app.invoke({ question });
-      console.log(result["answer"]);
-      console.log(result["similarities"][0].weightedSimilarity);
+    const runPipeline = async (question, userEmails) => {
+      const result = await app.invoke({ 
+        question,
+        userEmails // Pass userEmails to the initial state
+      });
       return res.status(200).json({
         answer: result["answer"],
-        similarity: result["similarities"][0].weightedSimilarity,
+        similarity: result["similarities"]?.[0]?.weightedSimilarity || null,
       });
     };
-    runPipeline(email);
+
+    await runPipeline(email, userEmails);
   } catch (e) {
     return res
       .status(400)
-      .json({ error: e, message: "Failed to process request" });
+      .json({ error: e.message, message: "Failed to process request" });
   }
 };
 
