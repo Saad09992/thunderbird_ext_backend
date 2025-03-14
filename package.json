@@ -11,20 +11,25 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "mysql": "^2.18.1",
-    "mysql2": "^3.12.0",
     "@langchain/community": "^0.3.30",
     "@langchain/langgraph": "^0.2.46",
     "@langchain/openai": "^0.4.4",
     "@pinecone-database/pinecone": "^4.1.0",
+    "@vercel/blob": "^0.27.2",
     "compute-cosine-similarity": "^1.1.0",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
     "fs": "^0.0.1-security",
     "langchain": "^0.3.15",
     "ml-distance": "^4.0.1",
+    "multer": "^1.4.5-lts.1",
+    "mysql": "^2.18.1",
+    "mysql2": "^3.12.0",
     "openai": "^4.83.0",
-    "path": "^0.12.7"
+    "parquetjs-lite": "^0.8.7",
+    "path": "^0.12.7",
+    "ws": "^8.18.1"
   }
 }
