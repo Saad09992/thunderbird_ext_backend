@@ -10,7 +10,7 @@ import csv from "csv-parser";
 import { Readable } from "stream";
 import { WebSocketServer } from "ws";
 
-const wss = new WebSocketServer({ port: 8080 }); // WebSocket runs on port 8080
+const wss = new WebSocketServer({ port: 8080 });
 
 async function getFileData(url) {
   try {
@@ -392,10 +392,23 @@ export const uploadDataset = async (req, res) => {
     }
 
     const index = pc.Index(indexName);
-    await index.namespace(sessionId).deleteAll();
-    await index.namespace(sessionId).upsert(historySplits);
-    return res.status(200).json({ message: "Data received successfully" });
+    const stats = await index.describeIndexStats();
+    if (
+      stats.namespaces &&
+      stats.namespaces[sessionId] &&
+      stats.namespaces[sessionId].vectorCount > 0
+    ) {
+      try {
+        await index.namespace(sessionId).deleteAll();
+      } catch (error) {
+        console.log("Namespace:", sessionId, "Cannot be deleted");
+      }
+    } else {
+      await index.namespace(sessionId).upsert(historySplits);
+      return res.status(200).json({ message: "Data received successfully" });
+    }
   } catch (error) {
+    console.log(error);
     return res
       .status(400)
       .json({ message: "Uncatchable Error", error: error.message });
