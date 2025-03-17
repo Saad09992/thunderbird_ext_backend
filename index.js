@@ -8,10 +8,6 @@ const PORT = process.env.PORT || 3001;
 
 const app = express();
 
-// connection.connect(function (err) {
-//   if (err) throw err;
-//   console.log("Database connected successfully");
-// });
 dotenv.config();
 app.use(express.json());
 app.use(
