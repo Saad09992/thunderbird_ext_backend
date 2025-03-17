@@ -8,9 +8,9 @@ import cosineSimilarity from "compute-cosine-similarity";
 import crypto from "crypto";
 import csv from "csv-parser";
 import { Readable } from "stream";
-// import { WebSocketServer } from "ws";
+import { WebSocketServer } from "ws";
 
-// const wss = new WebSocketServer({ port: 8080 }); // WebSocket runs on port 8080
+const wss = new WebSocketServer({ port: 8080 }); // WebSocket runs on port 8080
 
 async function getFileData(url) {
   try {
@@ -284,19 +284,19 @@ export const uploadWritingStyle = async (req, res) => {
       model: "text-embedding-3-large",
     });
 
-    // let completed = 0;
-    // const total = writingStyle.length;
+    let completed = 0;
+    const total = writingStyle.length;
     const allSplits = await Promise.all(
       writingStyle.map(async (chunk, idx) => {
         const vector = await embeddings.embedQuery(chunk);
-        // completed++;
-        // wss.clients.forEach((client) => {
-        //   if (client.readyState === 1) {
-        //     client.send(
-        //       JSON.stringify({ sessionId, progress: (completed / total) * 100 })
-        //     );
-        //   }
-        // });
+        completed++;
+        wss.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(
+              JSON.stringify({ sessionId, progress: (completed / total) * 100 })
+            );
+          }
+        });
         return {
           id: `${sessionId}-${idx}`,
           values: vector,
@@ -350,20 +350,20 @@ export const uploadDataset = async (req, res) => {
       model: "text-embedding-3-large",
     });
 
-    // let completed = 0;
-    // const total = processedDataset.length + 2;
+    let completed = 0;
+    const total = processedDataset.length + 2;
 
     const historySplits = await Promise.all(
       processedDataset.map(async (chunk, idx) => {
         const vector = await embeddings.embedQuery(chunk);
-        // completed++;
-        // wss.clients.forEach((client) => {
-        //   if (client.readyState === 1) {
-        //     client.send(
-        //       JSON.stringify({ sessionId, progress: (completed / total) * 100 })
-        //     );
-        //   }
-        // });
+        completed++;
+        wss.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(
+              JSON.stringify({ sessionId, progress: (completed / total) * 100 })
+            );
+          }
+        });
         return {
           id: `${sessionId}-${idx}`,
           values: vector,
