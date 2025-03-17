@@ -10,9 +10,7 @@ import csv from "csv-parser";
 import { Readable } from "stream";
 import { WebSocketServer } from "ws";
 
-
 const wss = new WebSocketServer({ port: 8080 }); // WebSocket runs on port 8080
-
 
 async function getFileData(url) {
   try {
@@ -87,41 +85,39 @@ const parseCSV = async (csvString) => {
 
 export const processEmails = async (req, res) => {
   try {
-    const { email, sessionId, conversationHistory} = req.body;
+    const { email, sessionId, conversationHistory } = req.body;
     const pineconeApiKey = process.env.PINECONE_API_KEY;
     const pc = new Pinecone({ apiKey: pineconeApiKey });
 
-      const historySplits = conversationHistory.map(
-          (chunk, idx) =>
-          new Document({
-              metadata: { source: "conversationHistory", emailIndex: idx },
-              pageContent: chunk,
-          })
-      );
+    const historySplits = conversationHistory.map(
+      (chunk, idx) =>
+        new Document({
+          metadata: { source: "conversationHistory", emailIndex: idx },
+          pageContent: chunk,
+        })
+    );
 
-      const refrenceIndexName = "refrenceemails";
-      const refrenceIndex = pc.Index(refrenceIndexName);
-      const datasetIndexName = "dataset";
-      const datasetIndex = pc.Index(datasetIndexName);
+    const refrenceIndexName = "refrenceemails";
+    const refrenceIndex = pc.Index(refrenceIndexName);
+    const datasetIndexName = "dataset";
+    const datasetIndex = pc.Index(datasetIndexName);
 
-      const embeddings = new OpenAIEmbeddings({
-          model: "text-embedding-3-large",
-      });
+    const embeddings = new OpenAIEmbeddings({
+      model: "text-embedding-3-large",
+    });
 
+    const refrenceVectorStore = await PineconeStore.fromExistingIndex(
+      embeddings,
+      {
+        pineconeIndex: refrenceIndex,
+      }
+    );
 
-      const refrenceVectorStore = await PineconeStore.fromExistingIndex(
-          embeddings,
-          {
-              pineconeIndex: refrenceIndex,
-          }
-      );
-
-
-      const datasetVectorStore = await PineconeStore.fromExistingIndex(
-          embeddings,
-          {
-              pineconeIndex: datasetIndex,
-          }
+    const datasetVectorStore = await PineconeStore.fromExistingIndex(
+      embeddings,
+      {
+        pineconeIndex: datasetIndex,
+      }
     );
     const getEmbedding = async (text) => embeddings.embedQuery(text);
 
@@ -146,15 +142,16 @@ export const processEmails = async (req, res) => {
       const retrievedDocs = await refrenceVectorStore.similaritySearch(
         state.question,
         5,
-        {namespace:sessionId}
+        { namespace: sessionId }
       );
       return { ...state, refrenceEmails: retrievedDocs };
     };
+
     const datasetRetrieve = async (state) => {
       const retrievedDocs = await datasetVectorStore.similaritySearch(
         state.question,
         5,
-        {namespace:sessionId}
+        { namespace: sessionId }
       );
       return { ...state, dataset: retrievedDocs };
     };
@@ -277,125 +274,130 @@ export const registerSession = async (req, res) => {
   }
 };
 
-export const uploadWritingStyle = async (req,res)=>{
-    try{
-        const {writingStyle,sessionId} = req.body;
-        const pineconeApiKey = process.env.PINECONE_API_KEY;
-        const pc = new Pinecone({ apiKey: pineconeApiKey });
+export const uploadWritingStyle = async (req, res) => {
+  try {
+    const { writingStyle, sessionId } = req.body;
+    const pineconeApiKey = process.env.PINECONE_API_KEY;
+    const pc = new Pinecone({ apiKey: pineconeApiKey });
 
-        const embeddings = new OpenAIEmbeddings({
-            model: "text-embedding-3-large",
+    const embeddings = new OpenAIEmbeddings({
+      model: "text-embedding-3-large",
+    });
+
+    let completed = 0;
+    const total = writingStyle.length;
+    const allSplits = await Promise.all(
+      writingStyle.map(async (chunk, idx) => {
+        const vector = await embeddings.embedQuery(chunk);
+        completed++;
+        wss.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(
+              JSON.stringify({ sessionId, progress: (completed / total) * 100 })
+            );
+          }
         });
+        return {
+          id: `${sessionId}-${idx}`,
+          values: vector,
+          metadata: { source: "writingStyle", emailIndex: idx, sessionId },
+        };
+      })
+    );
 
-        let completed = 0;
-        const total = writingStyle.length;
-        const allSplits = await Promise.all(
-            writingStyle.map(async (chunk, idx) => {
-                const vector = await embeddings.embedQuery(chunk);
-                completed++;
-                  wss.clients.forEach((client) => {
-                    if (client.readyState === 1) {
-                        client.send(JSON.stringify({ sessionId, progress: (completed / total) * 100 }));
-                    }
-                });
-                return {
-                    id: `${sessionId}-${idx}`, 
-                    values: vector,
-                    metadata: { source: "writingStyle", emailIndex: idx, sessionId }
-                };
-            })
-        );
+    const refrenceIndexName = "refrenceemails";
+    const existingIndexes = (await pc.listIndexes()).indexes.map(
+      (index) => index.name
+    );
 
-        const refrenceIndexName = "refrenceemails";
-        const existingIndexes = (await pc.listIndexes()).indexes.map(
-            (index) => index.name
-        );
-
-        if (!existingIndexes.includes(refrenceIndexName)) {
-            console.log("Creating reference index...");
-            await pc.createIndex({
-                name: refrenceIndexName,
-                dimension: 3072,
-                metric: "cosine",
-                spec: {
-                    serverless: {
-                        cloud: "aws",
-                        region: "us-east-1",
-                    },
-                },
-            });
-        }
-
-        const refrenceIndex = pc.Index(refrenceIndexName);
-        await refrenceIndex.namespace(sessionId).deleteAll();
-        await refrenceIndex.namespace(sessionId).upsert(allSplits);
-        return res.status(200).json({message:"Data received successfully",})
-    }catch(error){
-        console.log(error)
-        return res.status(400).json({message:"Uncatchable Error", error:error.message});
+    if (!existingIndexes.includes(refrenceIndexName)) {
+      console.log("Creating reference index...");
+      await pc.createIndex({
+        name: refrenceIndexName,
+        dimension: 3072,
+        metric: "cosine",
+        spec: {
+          serverless: {
+            cloud: "aws",
+            region: "us-east-1",
+          },
+        },
+      });
     }
 
-}
+    const refrenceIndex = pc.Index(refrenceIndexName);
+    await refrenceIndex.namespace(sessionId).deleteAll();
+    await refrenceIndex.namespace(sessionId).upsert(allSplits);
+    return res.status(200).json({ message: "Data received successfully" });
+  } catch (error) {
+    console.log(error);
+    return res
+      .status(400)
+      .json({ message: "Uncatchable Error", error: error.message });
+  }
+};
 
-export const uploadDataset = async (req,res)=>{
-    try{
-        const {url, sessionId} = req.body;
-        const resp = await getFileData(url);
-        const dataset = resp.data;
-        const processedDataset = await parseCSV(dataset);
-        const pineconeApiKey = process.env.PINECONE_API_KEY;
-        const pc = new Pinecone({ apiKey: pineconeApiKey });
+export const uploadDataset = async (req, res) => {
+  try {
+    const { url, sessionId } = req.body;
+    const resp = await getFileData(url);
+    const dataset = resp.data;
+    const processedDataset = await parseCSV(dataset);
+    const pineconeApiKey = process.env.PINECONE_API_KEY;
+    const pc = new Pinecone({ apiKey: pineconeApiKey });
 
-        const embeddings = new OpenAIEmbeddings({
-            model: "text-embedding-3-large",
+    const embeddings = new OpenAIEmbeddings({
+      model: "text-embedding-3-large",
+    });
+
+    let completed = 0;
+    const total = processedDataset.length + 2;
+
+    const historySplits = await Promise.all(
+      processedDataset.map(async (chunk, idx) => {
+        const vector = await embeddings.embedQuery(chunk);
+        completed++;
+        wss.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(
+              JSON.stringify({ sessionId, progress: (completed / total) * 100 })
+            );
+          }
         });
+        return {
+          id: `${sessionId}-${idx}`,
+          values: vector,
+          metadata: { source: "dataset", emailIndex: idx, sessionId },
+        };
+      })
+    );
+    const indexName = "dataset";
+    const existingIndexes = (await pc.listIndexes()).indexes.map(
+      (index) => index.name
+    );
 
-
-        let completed = 0;
-        const total = processedDataset.length+2;
-
-        const historySplits = await Promise.all(
-            processedDataset.map(async (chunk, idx) => {
-                const vector = await embeddings.embedQuery(chunk);
-                completed++;
-                  wss.clients.forEach((client) => {
-                    if (client.readyState === 1) {
-                        client.send(JSON.stringify({ sessionId, progress: (completed / total) * 100 }));
-                    }
-                });
-                return {
-                    id: `${sessionId}-${idx}`, 
-                    values: vector,
-                    metadata: { source: "dataset", emailIndex: idx, sessionId }
-                };
-            })
-        );
-        const indexName = "dataset";
-        const existingIndexes = (await pc.listIndexes()).indexes.map(
-            (index) => index.name
-        );
-
-        if (!existingIndexes.includes(indexName)) {
-            console.log("Creating reference index...");
-            await pc.createIndex({
-                name: indexName,
-                dimension: 3072,
-                metric: "cosine",
-                spec: {
-                    serverless: {
-                        cloud: "aws",
-                        region: "us-east-1",
-                    },
-                },
-            });
-        }
-
-        const index = pc.Index(indexName);
-        await index.namespace(sessionId).deleteAll();
-        await index.namespace(sessionId).upsert(historySplits);
-        return res.status(200).json({message:"Data received successfully",})
-
-    }catch(error){
-        return res.status(400).json({message:"Uncatchable Error", error: error.message});
+    if (!existingIndexes.includes(indexName)) {
+      console.log("Creating reference index...");
+      await pc.createIndex({
+        name: indexName,
+        dimension: 3072,
+        metric: "cosine",
+        spec: {
+          serverless: {
+            cloud: "aws",
+            region: "us-east-1",
+          },
+        },
+      });
     }
-}
+
+    const index = pc.Index(indexName);
+    await index.namespace(sessionId).deleteAll();
+    await index.namespace(sessionId).upsert(historySplits);
+    return res.status(200).json({ message: "Data received successfully" });
+  } catch (error) {
+    return res
+      .status(400)
+      .json({ message: "Uncatchable Error", error: error.message });
+  }
+};
