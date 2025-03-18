@@ -6,6 +6,7 @@ import {
   uploadWritingStyle,
   uploadDataset,
   removeDataset,
+  clearWritingStyle,
 } from "../controller/LangController.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -37,4 +38,5 @@ langRouter.post("/api/get-data-from-file", getDataFromFile);
 langRouter.post("/api/upload-writing-style", uploadWritingStyle);
 langRouter.post("/api/upload-dataset", uploadDataset);
 langRouter.post("/api/remove-dataset",removeDataset);
+langRouter.post("/api/clear-writing-style", clearWritingStyle);
 export default langRouter;

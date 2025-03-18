@@ -326,7 +326,18 @@ export const uploadWritingStyle = async (req, res) => {
         }
 
         const refrenceIndex = pc.Index(refrenceIndexName);
-        await refrenceIndex.namespace(sessionId).deleteAll();
+        const stats = await refrenceIndex.describeIndexStats();
+        if (
+            stats.namespaces &&
+            stats.namespaces[sessionId] &&
+            stats.namespaces[sessionId].vectorCount > 0
+        ) {
+            try {
+                await refrenceIndex.namespace(sessionId).deleteAll();
+            } catch (error) {
+                console.log("Namespace:", sessionId, "Cannot be deleted");
+            }
+        }
         await refrenceIndex.namespace(sessionId).upsert(allSplits);
         return res.status(200).json({ message: "Data received successfully" });
     } catch (error) {
@@ -403,10 +414,10 @@ export const uploadDataset = async (req, res) => {
             } catch (error) {
                 console.log("Namespace:", sessionId, "Cannot be deleted");
             }
-        } else {
+        } 
             await index.namespace(sessionId).upsert(historySplits);
             return res.status(200).json({ message: "Data received successfully" });
-        }
+        
     } catch (error) {
         console.log(error);
         return res
@@ -419,7 +430,6 @@ export const uploadDataset = async (req, res) => {
 export const removeDataset = async (req, res) => {
     try {
         const { sessionId } = req.body;
-        console.log(sessionId)
         const pineconeApiKey = process.env.PINECONE_API_KEY;
         const pc = new Pinecone({ apiKey: pineconeApiKey });
         if (sessionId == "" || sessionId == null) {
@@ -443,6 +453,37 @@ export const removeDataset = async (req, res) => {
         }
         return res.status(200).json({ message: "Dataset removed" });
     } catch (err) {
+        return res.status(400).json({ message: "Uncatchable Error", error: err.message });
+    }
+}
+
+export const clearWritingStyle =async(req,res)=>{
+    try {
+        const { sessionId } = req.body;
+        const pineconeApiKey = process.env.PINECONE_API_KEY;
+        const pc = new Pinecone({ apiKey: pineconeApiKey });
+        if (sessionId == "" || sessionId == null) {
+            return res.status(400).json({ message: "No session id found" });
+        }
+        const indexName = "refrenceemails";
+        const index = pc.index(indexName);
+        const stats = await index.describeIndexStats();
+        console.log(stats.namespaces)
+        if (
+            stats.namespaces &&
+            stats.namespaces[sessionId]
+        ) {
+            try {
+                console.log("deleting namespace")
+                await index.namespace(sessionId).deleteAll();
+            } catch (error) {
+                console.log("Namespace:", sessionId, "Cannot be deleted");
+                return res.status(400).json({ message: "Uncatchable Error", error: err.message });
+            }
+        }
+        return res.status(200).json({ message: "Emails  removed" });
+    } catch (err) {
+        console.log(err)
         return res.status(400).json({ message: "Uncatchable Error", error: err.message });
     }
 }
