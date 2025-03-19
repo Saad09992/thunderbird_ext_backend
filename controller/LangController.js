@@ -205,7 +205,7 @@ export const processEmails = async (req, res) => {
       You are an AI assistant that helps me to write emails.
       Based on the refrence emails provided. I want you to refine the email response provided by the user.
       What REFINE mean: Modify the email to the extent that its meaning does not change only the tone, writing style and grammar of the email is modified.
-      NOTE: Do not change the email structure, meaning or any other details. Just refine the email.
+      NOTE: Do not change the email structure, meaning or any other details. Just refine the email. Also remove the Subject line is present only return thr body and last part of emails in short exclude the subject from the email when returning.
 
       EMAIL: {email}
       Refrence Emails: {refrence} 
