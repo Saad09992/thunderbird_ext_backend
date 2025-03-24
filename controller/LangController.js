@@ -9,8 +9,8 @@ import crypto from "crypto";
 import csv from "csv-parser";
 import { Readable } from "stream";
 import fs from "fs/promises";
-import path from "path";
 import { WebSocketServer } from "ws";
+import pdf from "pdf-parse";
 
 const wss = new WebSocketServer({ port: 8080 });
 
@@ -68,22 +68,67 @@ export const getDataFromFile = async (req, res) => {
     }
 };
 
-const parseCSV = async (csvString) => {
-    return new Promise((resolve, reject) => {
-        const results = [];
-        Readable.from(csvString)
-            .pipe(csv()) // Parse CSV
-            .on("data", (row) => {
-                if (row.instruction && row.response) {
-                    // Combine instruction and response
-                    const content = `Instruction: ${row.instruction}\nResponse: ${row.response}`;
-                    results.push(content);
-                }
-            })
-            .on("end", () => resolve(results))
-            .on("error", (err) => reject(err));
-    });
+const parseDataset = async (buffer, ext) => {
+    if(ext == "text/csv") {
+        try {
+            return new Promise((resolve, reject) => {
+                const results = [];
+                Readable.from(buffer)
+                    .pipe(csv()) // Parse CSV
+                    .on("data", (row) => {
+                        if (row.instruction && row.response) {
+                            // Combine instruction and response
+                            const content = `Instruction: ${row.instruction}\nResponse: ${row.response}`;
+                            results.push(content);
+                        }
+                    })
+                    .on("end", () => resolve(results))
+                    .on("error", (err) => reject(err));
+            });
+        } catch(error) {
+            console.error("Error parsing CSV:", error.message);
+            throw error;
+        }
+    } else if(ext == "application/pdf") {
+        try {
+            const data = await pdf(buffer); // Extract text
+            
+            const chunks = splitTextIntoChunks(data.text);
+            
+            return chunks; // Return an array of text chunks
+        } catch (error) {
+            console.error("Error parsing PDF:", error.message);
+            throw error;
+        }
+    }
 };
+
+function splitTextIntoChunks(text, chunkSize = 150) {
+    const chunks = [];
+    let startIndex = 0;
+    
+    while (startIndex < text.length) {
+        // Find a good breaking point (period, paragraph, etc.)
+        let endIndex = Math.min(startIndex + chunkSize, text.length);
+        
+        // Try to find a natural break point (period followed by space or newline)
+        if (endIndex < text.length) {
+            const nextPeriod = text.indexOf('. ', endIndex - 100);
+            const nextNewline = text.indexOf('\n', endIndex - 100);
+            
+            if (nextPeriod !== -1 && nextPeriod < endIndex + 100) {
+                endIndex = nextPeriod + 1;
+            } else if (nextNewline !== -1 && nextNewline < endIndex + 100) {
+                endIndex = nextNewline + 1;
+            }
+        }
+        
+        chunks.push(text.substring(startIndex, endIndex).trim());
+        startIndex = endIndex;
+    }
+    console.log("Chunks: ", chunks);
+    return chunks;
+}
 
 export const processEmails = async (req, res) => {
     try {
@@ -356,9 +401,11 @@ export const uploadDataset = async (req, res) => {
             return res.status(400).json({message:"No file found"});
         }
         const {  sessionId } = req.body;
+        console.log("SessionId: ", sessionId)
         const filePath = req.file.path;
-        const dataset = await fs.readFile(filePath,"utf-8");
-        const processedDataset = await parseCSV(dataset);
+        const fileExt = req.file.mimetype;
+        const dataset = await fs.readFile(filePath, fileExt == "application/pdf" ? null : "utf-8");
+        const processedDataset = await parseDataset(dataset, fileExt);
         const pineconeApiKey = process.env.PINECONE_API_KEY;
         const pc = new Pinecone({ apiKey: pineconeApiKey });
         const embeddings = new OpenAIEmbeddings({
@@ -367,7 +414,7 @@ export const uploadDataset = async (req, res) => {
 
         let completed = 0;
         const total = processedDataset.length + 2;
-
+        console.log("Starting to generate Splits");
         const historySplits = await Promise.all(
             processedDataset.map(async (chunk, idx) => {
                 const vector = await embeddings.embedQuery(chunk);
@@ -386,6 +433,7 @@ export const uploadDataset = async (req, res) => {
                 };
             })
         );
+        console.log("History Splits processed");
         const indexName = "dataset";
         const existingIndexes = (await pc.listIndexes()).indexes.map(
             (index) => index.name
@@ -419,8 +467,9 @@ export const uploadDataset = async (req, res) => {
                 console.log("Namespace:", sessionId, "Cannot be deleted");
             }
         } 
-            await index.namespace(sessionId).upsert(historySplits);
-            return res.status(200).json({ message: "Data received successfully" });
+        console.log("Saving data to pinecone")
+        await index.namespace(sessionId).upsert(historySplits);
+        return res.status(200).json({ message: "Data received successfully" });
         
     } catch (error) {
         console.log(error);
