@@ -8,12 +8,15 @@ import cosineSimilarity from "compute-cosine-similarity";
 import crypto from "crypto";
 import csv from "csv-parser";
 import { Readable } from "stream";
-import fs from "fs/promises";
+import fs from "fs";
+import { promises as fsPromises } from "fs";
 import { WebSocketServer } from "ws";
 import pdf from "pdf-parse";
-
+import pdfParse from "pdf-parse";
+import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+import csvParser from "csv-parser";
 const wss = new WebSocketServer({ port: 8080 });
-
+const outputPath = "../public/output"
 async function getFileData(url) {
     try {
         const response = await fetch(url);
@@ -397,47 +400,59 @@ export const uploadWritingStyle = async (req, res) => {
 
 export const uploadDataset = async (req, res) => {
     try {
-        if(!req.file){
-            return res.status(400).json({message:"No file found"});
+        if (!req.file) {
+            return res.status(400).json({ message: "No file found" });
         }
-        const {  sessionId } = req.body;
-        console.log("SessionId: ", sessionId)
+
+        const { sessionId } = req.body;
+        console.log("SessionId: ", sessionId);
+
         const filePath = req.file.path;
         const fileExt = req.file.mimetype;
-        const dataset = await fs.readFile(filePath, fileExt == "application/pdf" ? null : "utf-8");
-        const processedDataset = await parseDataset(dataset, fileExt);
         const pineconeApiKey = process.env.PINECONE_API_KEY;
-        const pc = new Pinecone({ apiKey: pineconeApiKey });
-        const embeddings = new OpenAIEmbeddings({
-            model: "text-embedding-3-large",
-        });
 
+        const pc = new Pinecone({ apiKey: pineconeApiKey });
+        const embeddings = new OpenAIEmbeddings({ model: "text-embedding-3-large" });
+
+        // Convert file to text
+        const textContent = await fileToTxt(filePath, fileExt);
+
+        // Split text into chunks
+        const textSplitter = new RecursiveCharacterTextSplitter({
+            chunkSize: 300,
+            chunkOverlap: 30,
+        });
+        const processedDataset = await textSplitter.splitText(textContent);
+
+        console.log("Generating embeddings in BATCH mode...");
+
+        const batchSize = 50;
         let completed = 0;
-        const total = processedDataset.length + 2;
-        console.log("Starting to generate Splits");
-        const historySplits = await Promise.all(
-            processedDataset.map(async (chunk, idx) => {
-                const vector = await embeddings.embedQuery(chunk);
-                completed++;
-                wss.clients.forEach((client) => {
-                    if (client.readyState === 1) {
-                        client.send(
-                            JSON.stringify({ sessionId, progress: (completed / total) * 100 })
-                        );
-                    }
-                });
-                return {
-                    id: `${sessionId}-${idx}`,
+        const total = processedDataset.length;
+        const vectors = [];
+
+        // Process embeddings in batches
+        for (let i = 0; i < processedDataset.length; i += batchSize) {
+            const batch = processedDataset.slice(i, i + batchSize);
+            const batchEmbeddings = await embeddings.embedDocuments(batch);
+
+            batchEmbeddings.forEach((vector, idx) => {
+                vectors.push({
+                    id: `${sessionId}-${i + idx}`,
                     values: vector,
-                    metadata: { source: "dataset", emailIndex: idx, sessionId },
-                };
-            })
-        );
+                    metadata: { source: "dataset", emailIndex: i + idx, sessionId },
+                });
+            });
+
+            completed += batch.length;
+            sendProgress(sessionId, (completed / total) * 100);
+            console.log(`Batch ${i / batchSize + 1} processed...`);
+        }
+
         console.log("History Splits processed");
+
         const indexName = "dataset";
-        const existingIndexes = (await pc.listIndexes()).indexes.map(
-            (index) => index.name
-        );
+        const existingIndexes = (await pc.listIndexes()).indexes.map((index) => index.name);
 
         if (!existingIndexes.includes(indexName)) {
             console.log("Creating reference index...");
@@ -456,28 +471,42 @@ export const uploadDataset = async (req, res) => {
 
         const index = pc.Index(indexName);
         const stats = await index.describeIndexStats();
-        if (
-            stats.namespaces &&
-            stats.namespaces[sessionId] &&
-            stats.namespaces[sessionId].vectorCount > 0
-        ) {
+
+        if (stats.namespaces && stats.namespaces[sessionId] && stats.namespaces[sessionId].vectorCount > 0) {
             try {
                 await index.namespace(sessionId).deleteAll();
             } catch (error) {
                 console.log("Namespace:", sessionId, "Cannot be deleted");
             }
-        } 
-        console.log("Saving data to pinecone")
-        await index.namespace(sessionId).upsert(historySplits);
-        return res.status(200).json({ message: "Data received successfully" });
-        
+        }
+
+        console.log("Saving data to Pinecone...");
+        for (let i = 0; i < vectors.length; i += batchSize) {
+            const batch = vectors.slice(i, i + batchSize);
+            await index.namespace(sessionId).upsert(batch);
+            completed += batch.length;
+            sendProgress(sessionId, (completed / total) * 100);
+            console.log(`Upserted batch ${i / batchSize + 1}`);
+        }
+
+        sendProgress(sessionId, 100); // Ensure progress reaches 100% at the end
+
+        return res.status(200).json({ message: "Data uploaded successfully" });
+
     } catch (error) {
         console.log(error);
-        return res
-            .status(400)
-            .json({ message: "Uncatchable Error", error: error.message });
+        return res.status(400).json({ message: "Error processing dataset", error: error.message });
     }
 };
+
+
+function sendProgress(sessionId, progress) {
+    wss.clients.forEach((client) => {
+        if (client.readyState === 1) {
+            client.send(JSON.stringify({ sessionId, progress }));
+        }
+    });
+}
 
 
 export const removeDataset = async (req, res) => {
@@ -540,3 +569,34 @@ export const clearWritingStyle =async(req,res)=>{
         return res.status(400).json({ message: "Uncatchable Error", error: err.message });
     }
 }
+
+async function fileToTxt(filePath,ext){
+    try {
+        if (ext === "application/pdf") {
+            const dataBuffer = await fsPromises.readFile(filePath);
+            const data = await pdfParse(dataBuffer);
+            return data.text;
+        } else if (ext === "text/csv") {
+            const rows = [];
+            return new Promise((resolve, reject) => {
+                fs.createReadStream(filePath)
+                    .pipe(csvParser())
+                    .on("data", (row) => {
+                        rows.push(Object.values(row).join(" ")); // Convert CSV row to space-separated text
+                    })
+                    .on("end", () => {
+                        resolve(rows.join("\n")); // Join rows with newline
+                    })
+                    .on("error", (err) => {
+                        reject("Error parsing CSV: " + err);
+                    });
+            });
+        } else {
+            throw new Error("Unsupported file type");
+        }
+    } catch (err) {
+        console.error("Error converting file to TXT:", err);
+        return "";
+    }
+}
+
