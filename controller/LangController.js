@@ -17,6 +17,7 @@ import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import csvParser from "csv-parser";
 const wss = new WebSocketServer({ port: 8080 });
 const outputPath = "../public/output"
+
 async function getFileData(url) {
     try {
         const response = await fetch(url);
@@ -70,68 +71,6 @@ export const getDataFromFile = async (req, res) => {
         });
     }
 };
-
-const parseDataset = async (buffer, ext) => {
-    if(ext == "text/csv") {
-        try {
-            return new Promise((resolve, reject) => {
-                const results = [];
-                Readable.from(buffer)
-                    .pipe(csv()) // Parse CSV
-                    .on("data", (row) => {
-                        if (row.instruction && row.response) {
-                            // Combine instruction and response
-                            const content = `Instruction: ${row.instruction}\nResponse: ${row.response}`;
-                            results.push(content);
-                        }
-                    })
-                    .on("end", () => resolve(results))
-                    .on("error", (err) => reject(err));
-            });
-        } catch(error) {
-            console.error("Error parsing CSV:", error.message);
-            throw error;
-        }
-    } else if(ext == "application/pdf") {
-        try {
-            const data = await pdf(buffer); // Extract text
-            
-            const chunks = splitTextIntoChunks(data.text);
-            
-            return chunks; // Return an array of text chunks
-        } catch (error) {
-            console.error("Error parsing PDF:", error.message);
-            throw error;
-        }
-    }
-};
-
-function splitTextIntoChunks(text, chunkSize = 150) {
-    const chunks = [];
-    let startIndex = 0;
-    
-    while (startIndex < text.length) {
-        // Find a good breaking point (period, paragraph, etc.)
-        let endIndex = Math.min(startIndex + chunkSize, text.length);
-        
-        // Try to find a natural break point (period followed by space or newline)
-        if (endIndex < text.length) {
-            const nextPeriod = text.indexOf('. ', endIndex - 100);
-            const nextNewline = text.indexOf('\n', endIndex - 100);
-            
-            if (nextPeriod !== -1 && nextPeriod < endIndex + 100) {
-                endIndex = nextPeriod + 1;
-            } else if (nextNewline !== -1 && nextNewline < endIndex + 100) {
-                endIndex = nextNewline + 1;
-            }
-        }
-        
-        chunks.push(text.substring(startIndex, endIndex).trim());
-        startIndex = endIndex;
-    }
-    console.log("Chunks: ", chunks);
-    return chunks;
-}
 
 export const processEmails = async (req, res) => {
     try {
@@ -426,8 +365,11 @@ export const uploadDataset = async (req, res) => {
 
         console.log("Generating embeddings in BATCH mode...");
 
+
+
         const batchSize = 50;
-        let completed = 0;
+        let completedEmbedding = 0;
+        let completedUploading = 0;
         const total = processedDataset.length;
         const vectors = [];
 
@@ -444,8 +386,8 @@ export const uploadDataset = async (req, res) => {
                 });
             });
 
-            completed += batch.length;
-            sendProgress(sessionId, (completed / total) * 100);
+            completedEmbedding += batch.length;
+            sendProgress(sessionId, (completedEmbedding / total) * 100, "embedding");
             console.log(`Batch ${i / batchSize + 1} processed...`);
         }
 
@@ -484,8 +426,8 @@ export const uploadDataset = async (req, res) => {
         for (let i = 0; i < vectors.length; i += batchSize) {
             const batch = vectors.slice(i, i + batchSize);
             await index.namespace(sessionId).upsert(batch);
-            completed += batch.length;
-            sendProgress(sessionId, (completed / total) * 100);
+            completedUploading += batch.length;
+            sendProgress(sessionId, (completedUploading/ total) * 100, "uploading");
             console.log(`Upserted batch ${i / batchSize + 1}`);
         }
 
@@ -499,15 +441,13 @@ export const uploadDataset = async (req, res) => {
     }
 };
 
-
-function sendProgress(sessionId, progress) {
+function sendProgress(sessionId, progress, type) {
     wss.clients.forEach((client) => {
         if (client.readyState === 1) {
-            client.send(JSON.stringify({ sessionId, progress }));
+            client.send(JSON.stringify({ sessionId, progress, type }));
         }
     });
 }
-
 
 export const removeDataset = async (req, res) => {
     try {
