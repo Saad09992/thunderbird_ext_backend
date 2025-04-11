@@ -19,10 +19,7 @@ const rootDir = path.resolve(currentDirname, "../");
 const imageStorage = multer.diskStorage({
   destination: path.join(rootDir, "/public/datasets"),
   filename: (req, file, cb) => {
-    cb(
-      null,
-      Date.now() + path.extname(file.originalname)
-    );
+    cb(null, Date.now() + path.extname(file.originalname));
   },
 });
 
@@ -36,7 +33,11 @@ langRouter.post("/api/process-emails", processEmails);
 langRouter.post("/api/register-session", registerSession);
 langRouter.post("/api/get-data-from-file", getDataFromFile);
 langRouter.post("/api/upload-writing-style", uploadWritingStyle);
-langRouter.post("/api/upload-dataset",upload.single("datasetFile") ,uploadDataset);
-langRouter.post("/api/remove-dataset",removeDataset);
+langRouter.post(
+  "/api/upload-dataset",
+  upload.single("datasetFile"),
+  uploadDataset,
+);
+langRouter.post("/api/remove-dataset", removeDataset);
 langRouter.post("/api/clear-writing-style", clearWritingStyle);
 export default langRouter;
